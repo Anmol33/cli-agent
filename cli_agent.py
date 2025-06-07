@@ -14,11 +14,13 @@ from rich.console import Console
 from rich.prompt import Prompt
 from rich.panel import Panel
 from dotenv import load_dotenv
-import boto3
 from colorama import init
 from rich.logging import RichHandler
 from logging.handlers import TimedRotatingFileHandler
-from botocore.config import Config
+from rich.theme import Theme
+from rich import print as rprint
+from providers import BedrockProvider, OpenAIProvider, AnthropicProvider
+from logger import logger
 
 # Initialize colorama for Windows compatibility
 init()
@@ -53,18 +55,22 @@ class CLIAgent:
     def __init__(self):
         self.config = self._load_config()
         self._setup_logging()
-        self._setup_bedrock()
-        self.history = []
-        self.console = Console()
-        self.memory = ConversationMemory()
+        self.ai_provider = self._setup_ai_provider()
+        self.console = Console(theme=Theme({
+            "info": "cyan",
+            "warning": "yellow",
+            "error": "red",
+            "success": "green"
+        }))
+        self.command_history = []
+        self._setup_logging()
 
-    def _load_config(self) -> Dict[str, Any]:
-        """Load configuration from YAML file."""
+    def _load_config(self):
         try:
             with open('config.yaml', 'r') as f:
                 return yaml.safe_load(f)
         except FileNotFoundError:
-            console.print("[red]Error: config.yaml not found![/red]")
+            console.print("[red]Error: config.yaml not found. Please run the installation script first.[/red]")
             sys.exit(1)
 
     def _setup_logging(self):
@@ -107,96 +113,31 @@ class CLIAgent:
         handler.setFormatter(formatter)
         self.command_logger.addHandler(handler)
 
-    def _setup_bedrock(self):
-        """Initialize Amazon Bedrock client."""
-        try:
-            self.bedrock = boto3.client(
-                service_name='bedrock-runtime',
-                region_name=self.config['bedrock']['region']
-            )
-        except Exception as e:
-            console.print(f"[red]Error initializing Bedrock client: {str(e)}[/red]")
+    def _setup_ai_provider(self):
+        provider = self.config['ai_provider'].lower()
+        if provider == 'bedrock':
+            return BedrockProvider(self.config)
+        elif provider == 'openai':
+            return OpenAIProvider(self.config)
+        elif provider == 'anthropic':
+            return AnthropicProvider(self.config)
+        else:
+            console.print(f"[red]Error: Unsupported provider '{provider}'[/red]")
             sys.exit(1)
 
     def _get_command_from_ai(self, user_input: str) -> str:
-        """Use Claude through Bedrock to convert natural language to bash command."""
+        """Get command from AI provider."""
         try:
-            # Get conversation history
-            history = self.memory.get_history("default")
+            self.console.print("[cyan]🤖 Processing your request...[/cyan]")
+            logger.info(f"AI Request: {user_input}")
             
-            # Build messages array with history
-            messages = []
+            command = self.ai_provider.generate_command(user_input)
             
-            # Add system message
-            system_message = """You are a helpful assistant that converts natural language to bash commands.
-            Only respond with the bash command, no explanations.
-            Your response should be a single line containing only the bash command."""
-            
-            messages.append({
-                "role": "user",
-                "content": system_message
-            })
-            messages.append({
-                "role": "assistant",
-                "content": "I understand. I will only respond with the bash command, no explanations."
-            })
-            
-            # Add recent conversation history (last 4 exchanges)
-            recent_history = history[-4:] if len(history) > 4 else history
-            for msg in recent_history:
-                if msg["role"] in ["user", "assistant"]:
-                    messages.append(msg)
-            
-            # Add current prompt
-            messages.append({
-                "role": "user",
-                "content": user_input
-            })
-            
-            # Log the request
-            self.command_logger.info(f"Request: {user_input}")
-            
-            # Prepare the request body
-            request_body = {
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": self.config['bedrock']['max_tokens'],
-                "temperature": self.config['bedrock']['temperature'],
-                "messages": messages
-            }
-            
-            # Convert to JSON string
-            request_body_json = json.dumps(request_body)
-            
-            # Invoke the model
-            response = self.bedrock.invoke_model(
-                modelId=self.config['bedrock']['model'],
-                body=request_body_json
-            )
-            
-            # Parse the response
-            response_body = json.loads(response['body'].read())
-            
-            # Extract the response text
-            command = ""
-            if 'content' in response_body:
-                for content in response_body['content']:
-                    if content.get('type') == 'text':
-                        command += content.get('text', '')
-            
-            command = command.strip()
-            
-            # Log the response
-            self.command_logger.info(f"Command: {command}")
-            
-            # Store the conversation
-            self.memory.add_message("default", "user", user_input)
-            self.memory.add_message("default", "assistant", command)
-            
+            logger.info(f"AI Response: {command}")
             return command
         except Exception as e:
-            error_msg = f"Bedrock API error: {str(e)}"
-            self.logger.error(error_msg)
-            return ""
+            logger.error(f"Error getting command from AI: {str(e)}")
+            raise
 
     def execute_command(self, command: str) -> tuple[bool, str]:
         """Execute a bash command and handle its output."""
