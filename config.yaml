@@ -1,0 +1,38 @@
+# CLI Agent Configuration
+
+# Amazon Bedrock settings
+bedrock:
+  model: "anthropic.claude-v2"
+  temperature: 0.7
+  max_tokens: 150
+  region: "us-west-2"
+  # AWS credentials should be set as environment variables:
+  # AWS_ACCESS_KEY_ID
+  # AWS_SECRET_ACCESS_KEY
+
+# Command history settings
+history:
+  max_entries: 1000
+  save_to_file: true
+  history_file: ".cli_history"
+
+# UI settings
+ui:
+  prompt: "🤖 > "
+  error_color: "red"
+  success_color: "green"
+  info_color: "blue"
+  warning_color: "yellow"
+
+# Command execution settings
+execution:
+  timeout: 30  # seconds
+  max_retries: 3
+  confirm_dangerous_commands: true
+
+# Logging settings
+logging:
+  level: "INFO"
+  file: "cli_agent.log"
+  max_size: 10485760  # 10MB
+  backup_count: 5 
